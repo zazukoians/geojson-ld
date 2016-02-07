@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GeoJSON-LD proposal</title>
+
+  <script src="//cdn.jsdelivr.net/lodash/4.2.1/lodash.min.js"></script>
+  <script src="//code.jquery.com/jquery-1.12.0.min.js"></script>
+
+  <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css" />
+  <script src="//maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+
+  <link rel="stylesheet" href="//cdn.leafletjs.com/leaflet/v0.7.7/leaflet.css" />
+  <script src="//cdn.leafletjs.com/leaflet/v0.7.7/leaflet.js"></script>
+  <script src="//rawgit.com/arthur-e/Wicket/master/wicket.js"></script>
+  <script src="//rawgit.com/arthur-e/Wicket/master/wicket-leaflet.js"></script>
+
+  <script src="//rawgit.com/digitalbazaar/jsonld.js/master/js/jsonld.js"></script>
+
+  <style>
+    #map {
+      width: 100%;
+      height: 500px;
+    }
+
+    .info {
+      padding: 6px 8px;
+      font: 14px/16px Arial, Helvetica, sans-serif;
+      background: white;
+      background: rgba(255,255,255,0.8);
+      box-shadow: 0 0 15px rgba(0,0,0,0.2);
+      border-radius: 5px;
+    }
+    .info h4 {
+      margin: 0 0 5px;
+      color: #777;
+    }
+    .info pre {
+      font-size: 10px;
+      max-width: 300px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="row">
+      <div class="col-xs-12">
+        <h1>GeoJSON-LD - Embedding JSON-LD data into GeoJSON</h1>
+        <dl>
+          <dt>Author</dt>
+          <dd>Bergwinkl Thomas, <a href="http://zazuko.com/">Zazuko</a></dd>
+        </dl>
+
+        <h2>Introduction</h2>
+        <p>
+          The GitHub GeoJSON orginistation made a proposal how to make GeoJSON data JSON-Ld "enabled" <a href="https://github.com/geojson/geojson-ld">*</a>.
+          But converting the nested array structures of the geometry object doesn't work lossless and creates very complex RDF graphs <a href="https://github.com/geojson/geojson-ld/issues/32">*</a>.
+          This proposal is compatible with both standards.
+        </p>
+
+        <h2>GeoJSON-LD</h2>
+        <h3>Embedding JSON-LD in GeoJSON properties</h3>
+        <p>
+          The <em>properties</em> object of a GeoJSON feature contains data attached to the geometry object.
+          It's the first place a developer looks for data.
+          We propose to use that object also for JSON-LD data.
+          Using that object and not the whole GeoJSON object avoids the mentioned problem.
+          It doesn't require any changes in the code of JSON-LD or the object.
+        </p>
+
+        <h3>Mapping the geometry into a triple using the @geometry property</h3>
+        <p>
+          Without changes the geometry is lost in the JSON-LD object.
+          The <em>@geometry</em> property in the JSON-LD context could be used to define a mapping.
+          The value of that property is mapped to the predicate of the triple or in JSON-LD to the JSON property.
+          The datatype could be also given in the context to define the target format.
+        </p>
+
+        <h3>Example</h3>
+        <p>
+          The code to map the geometry to a triple is very simple.
+        </p>
+
+        <h4>Map a GeoJSON objecto to a JSON-LD object</h4>
+        <pre>    GeoJSON.toJSONLD = function (json) {
+      var properties = _.clone(json.properties);
+
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        properties[geometry] = {
+          '@value': JSON.stringify(_.omit(json, 'properties')),
+          '@type': 'http://www.opengis.net/ont/geosparql#geoJSONLiteral'
+        }
+      }
+
+      return properties;
+    };</pre>
+
+        <h4>Map a JSON-LD object to a GeoJSON object</h4>
+        <pre>    GeoJSON.toGeoJSON = function (properties) {
+      var json;
+
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        json = JSON.parse(properties[geometry]['@value']);
+        json.properties = _.omit(properties, geometry);
+      }
+
+      return json;
+    };</pre>
+
+        <h4>Leaflet</h4>
+        <p>
+          Here is a live example using Leaflet.
+          The function to map the geometry to the JSON-LD object is also very simple and supports GeoJSON and WKT.
+        </p>
+        <pre>    function layerToJSONLD(layer) {
+      var properties = _.clone(layer.feature.properties);
+
+      // check if we have a geometry property in the context
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        // convert to GeoJSON using Leaflet core
+        var geojsonLiteral = JSON.stringify(layer.toGeoJSON());
+
+        // convert to WKT using Wicket
+        var wkt = new Wkt.Wkt();
+        wkt.fromObject(layer);
+        var wktLiteral =wkt.write();
+
+        properties[geometry] = [{
+          '@value': geojsonLiteral,
+          '@type': 'http://www.opengis.net/ont/geosparql#geoJSONLiteral'
+        }, {
+          '@value': wktLiteral,
+          '@type': 'http://www.opengis.net/ont/geosparql#wktLiteral'
+        }]
+      }
+
+      return properties;
+    }</pre>
+        <div id="map"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function escapeNTriples (nTriples) {
+      return nTriples.split('<').join('&lt;').split('>').join('&gt;');
+    }
+
+    var GeoJSON = {};
+
+    GeoJSON.toJSONLD = function (json) {
+      var properties = _.clone(json.properties);
+
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        properties[geometry] = {
+          '@value': JSON.stringify(_.omit(json, 'properties')),
+          '@type': 'http://www.opengis.net/ont/geosparql#geoJSONLiteral'
+        }
+      }
+
+      return properties;
+    };
+
+    GeoJSON.toGeoJSON = function (properties) {
+      var json;
+
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        json = JSON.parse(properties[geometry]['@value']);
+        json.properties = _.omit(properties, geometry);
+      }
+
+      return json;
+    };
+
+    function layerToJSONLD(layer) {
+      var properties = _.clone(layer.feature.properties);
+
+      // check if we have a geometry property in the context
+      if (_.has(properties, '@context.@geometry')) {
+        var geometry = _.get(properties, '@context.@geometry')
+
+        // convert to GeoJSON using Leaflet core
+        var geojsonLiteral = JSON.stringify(layer.toGeoJSON());
+
+        // convert to WKT using Wicket
+        var wkt = new Wkt.Wkt();
+        wkt.fromObject(layer);
+        var wktLiteral =wkt.write();
+
+        properties[geometry] = [{
+          '@value': geojsonLiteral,
+          '@type': 'http://www.opengis.net/ont/geosparql#geoJSONLiteral'
+        }, {
+          '@value': wktLiteral,
+          '@type': 'http://www.opengis.net/ont/geosparql#wktLiteral'
+        }]
+      }
+
+      return properties;
+    }
+
+    $.getJSON('us-states.json', function (statesData) {
+      var feature = statesData.features[0];
+      console.log(JSON.stringify(feature));
+      var geojsonld = GeoJSON.toJSONLD(feature);
+      console.log(JSON.stringify(geojsonld));
+      var geojson = GeoJSON.toGeoJSON(geojsonld);
+      console.log(JSON.stringify(geojson));
+      console.log(_.isEqual(feature, geojson));
+
+      var map = L.map('map').setView([37.8, -96], 4);
+
+      L.tileLayer('https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.png?access_token=pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpandmbXliNDBjZWd2M2x6bDk3c2ZtOTkifQ._QA7i5Mpkd_m30IGElHziw', {
+        maxZoom: 18,
+        attribution: 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, ' +
+        '<a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
+        'Imagery © <a href="http://mapbox.com">Mapbox</a>',
+        id: 'mapbox.light'
+      }).addTo(map);
+
+      var info = L.control();
+
+      info.onAdd = function (map) {
+        this._div = L.DomUtil.create('div', 'info');
+        this.update();
+        return this._div;
+      };
+
+      info.update = function (layer) {
+        var element = this._div;
+
+        if (layer) {
+          var properties = layerToJSONLD(layer);
+
+          jsonld.toRDF(properties, {format: 'application/nquads'}, function (err, nTriples) {
+            if (!err) {
+              element.innerHTML = '<pre>' + escapeNTriples(nTriples) + '</pre>';
+            }
+          });
+        } else {
+          element.innerHTML = '';
+        }
+      };
+
+      info.addTo(map);
+
+      function highlightFeature(e) {
+        info.update(e.target);
+      }
+
+      function resetHighlight(e) {
+        info.update();
+      }
+
+      function onEachFeature(feature, layer) {
+        layer.on({
+          mouseover: highlightFeature,
+          mouseout: resetHighlight
+        });
+      }
+
+      L.geoJson(statesData, {
+        onEachFeature: onEachFeature
+      }).addTo(map);
+    });
+  </script>
+</body>
+</html>
